@@ -74,4 +74,36 @@ class CartController {
         }
         include __DIR__ . '/../views/cart/checkout.php';
     }
+    // 5. Xử lý lưu đơn hàng vào Database
+    public function processCheckout() {
+        if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+            $cart = $_SESSION['cart'] ?? [];
+            if (empty($cart)) {
+                header("Location: /project1/Product/list");
+                exit();
+            }
+
+            // Lấy dữ liệu từ form
+            $name = $_POST['name'] ?? '';
+            $phone = $_POST['phone'] ?? '';
+            $address = $_POST['address'] ?? '';
+            
+            // Tính tổng tiền
+            $total = 0;
+            foreach ($cart as $item) {
+                $total += $item['price'] * $item['quantity'];
+            }
+
+            // GỌI MODEL ĐỂ LƯU (Bạn cần tạo hàm này trong OrderModel hoặc ProductModel)
+            // Ví dụ: $orderId = OrderModel::saveOrder($name, $phone, $address, $total);
+            
+            // GIẢ LẬP LƯU THÀNH CÔNG:
+            // Sau khi lưu thành công, xóa giỏ hàng
+            unset($_SESSION['cart']);
+
+            // Thông báo và chuyển hướng
+            echo "<script>alert('Đặt hàng thành công! Cảm ơn bạn.'); window.location.href='/project1/Product/list';</script>";
+            exit();
+        }
+    }
 }
