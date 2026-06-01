@@ -1,109 +1,136 @@
 <?php
-// Sửa lỗi nạp file: Lùi 1 cấp từ controllers ra app, sau đó vào models
+require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../models/ProductModel.php';
+require_once __DIR__ . '/../models/OrderModel.php';
 
-class CartController {
-    public function __construct() {
-        // Đảm bảo session luôn chạy để lưu giỏ hàng
-        if (session_status() == PHP_SESSION_NONE) {
+class CartController
+{
+    public function __construct()
+    {
+        if (session_status() === PHP_SESSION_NONE) {
             session_start();
         }
     }
 
-    // 1. Thêm sản phẩm vào giỏ hàng
-    public function add($id) {
+    public function add($id, $quantity = 1, $redirect = 'list')
+    {
+        AuthHelper::checkLogin();
+        $qty = max(1, (int) $quantity);
         $product = ProductModel::getById($id);
         if ($product) {
             $productId = $product->getID();
-            
-            // Nếu đã có sản phẩm này thì tăng số lượng
+
             if (isset($_SESSION['cart'][$productId])) {
-                $_SESSION['cart'][$productId]['quantity'] += 1;
+                $_SESSION['cart'][$productId]['quantity'] += $qty;
             } else {
-                // Nếu chưa có thì thêm mới vào mảng session
                 $_SESSION['cart'][$productId] = [
                     'id' => $productId,
                     'name' => $product->getName(),
                     'price' => $product->getPrice(),
                     'image' => $product->getImage(),
-                    'quantity' => 1
+                    'quantity' => $qty,
                 ];
             }
         }
-        // Sau khi thêm, quay về danh sách sản phẩm để mua tiếp
-        header("Location: /project1/Product/list"); 
+
+        if ($product) {
+            flash_set('success', 'Đã thêm "' . $product->getName() . '" vào giỏ hàng!');
+        }
+
+        if ($redirect === 'detail') {
+            header('Location: ' . url('Product/detail/' . $id));
+        } elseif ($redirect === 'cart') {
+            header('Location: ' . url('Cart/view'));
+        } else {
+            header('Location: ' . url('Product/list'));
+        }
         exit();
     }
 
-    // 2. Hiển thị trang giỏ hàng
-    public function view() {
+    public function view()
+    {
         $cart = $_SESSION['cart'] ?? [];
-        $total = 0;
-        foreach ($cart as $item) {
-            $total += $item['price'] * $item['quantity'];
-        }
-        
-        // Sửa đường dẫn include: Lùi 1 cấp ra app, rồi vào views/cart
-        $viewPath = __DIR__ . '/../views/cart/index.php';
-        if (file_exists($viewPath)) {
-            include $viewPath;
-        } else {
-            die("Lỗi: Không tìm thấy file giao diện tại $viewPath");
-        }
+        $total = $this->calculateTotal($cart);
+
+        include __DIR__ . '/../views/cart/index.php';
     }
 
-    // 3. Xóa sản phẩm khỏi giỏ
-    public function remove($id) {
+    public function update($id, $quantity)
+    {
+        $id = (int) $id;
+        $quantity = max(1, (int) $quantity);
+
+        if (isset($_SESSION['cart'][$id])) {
+            $_SESSION['cart'][$id]['quantity'] = $quantity;
+        }
+
+        header('Location: ' . url('Cart/view'));
+        exit();
+    }
+
+    public function remove($id)
+    {
         if (isset($_SESSION['cart'][$id])) {
             unset($_SESSION['cart'][$id]);
         }
-        header("Location: /project1/Cart/view");
+        header('Location: ' . url('Cart/view'));
         exit();
     }
 
-    // 4. Trang thanh toán
-    public function checkout() {
+    public function checkout()
+    {
         $cart = $_SESSION['cart'] ?? [];
         if (empty($cart)) {
-            header("Location: /project1/Product/list");
+            header('Location: ' . url('Product/list'));
             exit();
         }
-        $total = 0;
-        foreach ($cart as $item) {
-            $total += $item['price'] * $item['quantity'];
-        }
+        $total = $this->calculateTotal($cart);
         include __DIR__ . '/../views/cart/checkout.php';
     }
-    // 5. Xử lý lưu đơn hàng vào Database
-    public function processCheckout() {
-        if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-            $cart = $_SESSION['cart'] ?? [];
-            if (empty($cart)) {
-                header("Location: /project1/Product/list");
-                exit();
-            }
 
-            // Lấy dữ liệu từ form
-            $name = $_POST['name'] ?? '';
-            $phone = $_POST['phone'] ?? '';
-            $address = $_POST['address'] ?? '';
-            
-            // Tính tổng tiền
-            $total = 0;
-            foreach ($cart as $item) {
-                $total += $item['price'] * $item['quantity'];
-            }
-
-            // GỌI MODEL ĐỂ LƯU (Bạn cần tạo hàm này trong OrderModel hoặc ProductModel)
-            // Ví dụ: $orderId = OrderModel::saveOrder($name, $phone, $address, $total);
-            
-            // GIẢ LẬP LƯU THÀNH CÔNG:
-            // Sau khi lưu thành công, xóa giỏ hàng
-            unset($_SESSION['cart']);
-
-            // Thông báo và chuyển hướng
-            echo "<script>alert('Đặt hàng thành công! Cảm ơn bạn.'); window.location.href='/project1/Product/list';</script>";
+    public function processCheckout()
+    {
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            header('Location: ' . url('Cart/checkout'));
             exit();
         }
+
+        $cart = $_SESSION['cart'] ?? [];
+        if (empty($cart)) {
+            header('Location: ' . url('Product/list'));
+            exit();
+        }
+
+        $customer = [
+            'name' => trim($_POST['name'] ?? ''),
+            'phone' => trim($_POST['phone'] ?? ''),
+            'address' => trim($_POST['address'] ?? ''),
+        ];
+        $paymentMethod = $_POST['payment_method'] ?? 'cod';
+
+        if ($customer['name'] === '' || $customer['phone'] === '' || $customer['address'] === '') {
+            echo "<script>alert('Vui lòng điền đầy đủ thông tin!'); history.back();</script>";
+            exit();
+        }
+
+        $orderId = OrderModel::create($customer, array_values($cart), $paymentMethod);
+
+        if (!$orderId) {
+            echo "<script>alert('Đặt hàng thất bại. Kiểm tra CSDL và thử lại.'); history.back();</script>";
+            exit();
+        }
+
+        unset($_SESSION['cart']);
+        header('Location: ' . url('Order/success/' . $orderId));
+        exit();
+    }
+
+    private function calculateTotal(array $cart): int
+    {
+        $total = 0;
+        foreach ($cart as $item) {
+            $total += (int) $item['price'] * (int) $item['quantity'];
+        }
+        return $total;
     }
 }

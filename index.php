@@ -1,42 +1,56 @@
 <?php
 session_start();
-// 1. Tự động nạp Model (để không cần require từng cái)
-require_once 'app/models/ProductModel.php';
 
-// 2. Lấy URL và làm sạch
-$requestUri = $_SERVER['REQUEST_URI'];
-// Bỏ qua thư mục dự án (Ví dụ: /project1/)
-$url = str_replace('/project1/', '', $requestUri); 
-$url = trim($url, '/');
-$url = filter_var($url, FILTER_SANITIZE_URL);
-$url = explode('/', $url);
+require_once __DIR__ . '/app/config/config.php';
+require_once __DIR__ . '/app/helpers/functions.php';
+require_once __DIR__ . '/app/helpers/auth.php';
+require_once __DIR__ . '/app/models/ProductModel.php';
 
-// 3. Xác định Controller (Mặc định là ProductController)
-$controllerName = (!empty($url[0])) ? ucfirst($url[0]) . 'Controller' : 'ProductController';
+// ── Remember Me: tự động đăng nhập nếu có cookie hợp lệ ──────────────
+if (!isLoggedIn() && isset($_COOKIE['remember_token'])) {
+    require_once __DIR__ . '/app/models/UserModel.php';
+    $remUser = UserModel::findByRememberToken($_COOKIE['remember_token']);
+    if ($remUser && $remUser['is_active']) {
+        $_SESSION['user'] = $remUser;
+    } else {
+        // Token không hợp lệ, xóa cookie
+        setcookie('remember_token', '', time() - 3600, '/');
+    }
+}
 
-// 4. Xác định Action (Mặc định là index)
-$action = (!empty($url[1])) ? $url[1] : 'index';
+// ── Routing ───────────────────────────────────────────────────────────
+$requestUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$path = $requestUri;
 
-// 5. Kiểm tra file Controller
-$controllerPath = 'app/controllers/' . $controllerName . '.php';
+if (BASE_PATH !== '' && str_starts_with($path, BASE_PATH)) {
+    $path = substr($path, strlen(BASE_PATH));
+}
+
+$path = trim($path, '/');
+$path = $path !== '' ? filter_var($path, FILTER_SANITIZE_URL) : '';
+$url = $path === '' ? [] : explode('/', $path);
+
+$controllerName = !empty($url[0]) ? ucfirst($url[0]) . 'Controller' : 'ProductController';
+$action = !empty($url[1]) ? $url[1] : 'index';
+
+$controllerPath = __DIR__ . '/app/controllers/' . $controllerName . '.php';
 
 if (!file_exists($controllerPath)) {
-    die("Lỗi: Không tìm thấy file Controller tại: $controllerPath");
+    http_response_code(404);
+    die('Không tìm thấy trang: ' . htmlspecialchars($controllerName));
 }
 
 require_once $controllerPath;
 
-// 6. Kiểm tra Class và Method
 if (!class_exists($controllerName)) {
-    die("Lỗi: Class $controllerName không tồn tại trong file.");
+    die('Class ' . htmlspecialchars($controllerName) . ' không tồn tại.');
 }
 
 $controller = new $controllerName();
 
 if (!method_exists($controller, $action)) {
-    die("Lỗi: Action '$action' không tồn tại trong $controllerName.");
+    http_response_code(404);
+    die('Chức năng "' . htmlspecialchars($action) . '" không tồn tại.');
 }
 
-// 7. Gọi action
 call_user_func_array([$controller, $action], array_slice($url, 2));
-?>
